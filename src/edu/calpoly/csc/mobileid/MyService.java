@@ -27,12 +27,20 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.AsyncTask;
+import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.Message;
+import android.os.Messenger;
 import android.util.Log;
+import android.widget.Toast;
+
 
 public class MyService extends Service implements SensorEventListener {
 
+   public static final String USER_ID_KEY = "user_id";
+   public  String userName = "null";
    int counter = 0;
    Timer timer = new Timer();
 
@@ -69,7 +77,7 @@ public class MyService extends Service implements SensorEventListener {
 
             Gson gson = new Gson();
             
-            String g = afs.toRecord();//gson.toJson(afs);
+            String g = afs.toRecord() + "," + userName;//gson.toJson(afs);
             Log.i("tag", "generated json");
             //Log.i("tag", "afs: " + afs);
             //Log.i("tag", "g: " + g);
@@ -92,12 +100,6 @@ public class MyService extends Service implements SensorEventListener {
             } catch (IOException e) {
                Log.e("tag", "IOException", e);
             }
-            Log.i("tag", "Response Status: " + response.getStatusLine());
-            //AsyncHttpPost asyncHttpPost = new AsyncHttpPost(g);
-            Log.i("tag", "created post. executing...");
-
-            //asyncHttpPost.execute();
-            Log.i("tag", "executed successfully! Resetting values!");
 
             
             counter = 0;
@@ -128,14 +130,25 @@ public class MyService extends Service implements SensorEventListener {
 
       timer = new Timer();
       timer.scheduleAtFixedRate(new CollectionTask(), 0, 50);
+      
 
       return Service.START_NOT_STICKY;
    }
 
+   final Messenger messageHandler = new Messenger(new IncomingHandler()); // Target we publish for clients to send messages to IncomingHandler.
+   class IncomingHandler extends Handler { // Handle user id messages
+      @Override
+      public void handleMessage(Message msg) {
+        Bundle data = msg.getData();
+        userName = data.getString(USER_ID_KEY);
+      }
+      
+  }
+   
    @Override
    public IBinder onBind(Intent intent) {
       Log.i("tag", "called onBind!!!");
-      return null;
+      return messageHandler.getBinder();
    }
 
    @Override
@@ -152,6 +165,8 @@ public class MyService extends Service implements SensorEventListener {
    }
 
    public AccelerometerFeatureSet updateAFS() {
+      Log.i("tag", "called updateAFS!!!");
+
       AccelerometerFeatureSet feature = new AccelerometerFeatureSet();
 
       List<Double> subXs = xs.subList(0, 200);
@@ -232,4 +247,11 @@ public class MyService extends Service implements SensorEventListener {
       }
 
    }
+   
+   @Override
+   public void onDestroy(){
+      Log.i("tag", "called on destroy");
+      timer.cancel();
+      super.onDestroy();
+  }
 }

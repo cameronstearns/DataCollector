@@ -1,6 +1,7 @@
 package edu.calpoly.csc.mobileid;
 
 import edu.calpoly.csc.mobileid.datatypes.AccelerometerFeatureSet;
+import edu.calpoly.csc.mobileid.datatypes.ParcelableString;
 import edu.calpoly.csc.mobileid.util.SimpleStatistics;
 
 import android.app.Activity;
@@ -8,13 +9,18 @@ import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.os.Bundle;
 import android.view.View;
+import android.content.ComponentName;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
 import android.net.Uri;
-import android.os.Bundle;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Message;
+import android.os.Messenger;
+import android.os.Parcel;
+import android.os.RemoteException;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.location.LocationManager;
@@ -35,7 +41,6 @@ import org.apache.http.entity.StringEntity;
 import org.apache.http.client.ClientProtocolException;
 import android.os.AsyncTask;
 import java.util.*;
-import java.lang.*;
 import java.net.*;
 import java.io.IOException;
 import android.app.AlertDialog.Builder;
@@ -43,6 +48,8 @@ import android.app.AlertDialog;
 import android.widget.Button;
 import android.widget.Toast;
 import android.content.DialogInterface;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import org.apache.http.util.EntityUtils;
 import org.json.JSONObject;
@@ -60,7 +67,6 @@ public class MainActivity extends Activity implements SensorEventListener {
 	ArrayList<Double> zs = new ArrayList<Double>();
 	Timer timer = new Timer();
 
-	private SensorEventListener listener = this;
 	private AccelerometerFeatureSet feature = new AccelerometerFeatureSet();
 	public final static String EXTRA_MESSAGE = "edu.calpoly.csc.mobileid.MESSAGE";
 
@@ -107,102 +113,6 @@ public class MainActivity extends Activity implements SensorEventListener {
 		};
 	}
 
-	public List<AccelerometerFeatureSet> updateAFS() {
-		List<AccelerometerFeatureSet> afsList = new ArrayList<AccelerometerFeatureSet>();
-
-		for (int i = 200; i < counter; i += 200) {
-			feature = new AccelerometerFeatureSet();
-
-			List<Double> subXs = xs.subList(i - 200, i);
-			List<Double> subYs = ys.subList(i - 200, i);
-			List<Double> subZs = zs.subList(i - 200, i);
-			feature.setAverageX(SimpleStatistics.calculateAverage(subXs));
-			feature.setAverageY(SimpleStatistics.calculateAverage(subYs));
-			feature.setAverageZ(SimpleStatistics.calculateAverage(subZs));
-
-			feature.setStdDevX(SimpleStatistics.standardDev(subXs));
-			feature.setStdDevY(SimpleStatistics.standardDev(subYs));
-			feature.setStdDevZ(SimpleStatistics.standardDev(subZs));
-
-			feature.setAvgAbsDistX(SimpleStatistics
-					.averageAbsoluteDifference(subXs));
-			feature.setAvgAbsDistY(SimpleStatistics
-					.averageAbsoluteDifference(subYs));
-			feature.setAvgAbsDistZ(SimpleStatistics
-					.averageAbsoluteDifference(subZs));
-
-			feature.setAvgResAccl(SimpleStatistics.averageResultantAccl(subXs, subYs,
-					subZs));
-
-			System.out.println("x");
-			feature.setTimeBtwnPkX(SimpleStatistics.timeBtwnPks(subXs));
-			System.out.println("y");
-			feature.setTimeBtwnPkY(SimpleStatistics.timeBtwnPks(subYs));
-			System.out.println("z");
-			feature.setTimeBtwnPkZ(SimpleStatistics.timeBtwnPks(subZs));
-
-			feature.setBinX(SimpleStatistics.bins(subXs));
-			feature.setBinY(SimpleStatistics.bins(subYs));
-			feature.setBinZ(SimpleStatistics.bins(subZs));
-			afsList.add(feature);
-		}
-		return afsList;
-	}
-
-	public class AsyncHttpPost extends AsyncTask<String, String, String> {
-		private HashMap<String, String> mData = null;
-		String mJson = null;
-
-		public AsyncHttpPost(HashMap<String, String> data) {
-			mData = data;
-		}
-
-		public AsyncHttpPost(String json) {
-			mJson = json;
-		}
-
-		@Override
-		protected String doInBackground(String... params) {
-			HttpClient httpclient = new DefaultHttpClient();
-			HttpPost httppost = new HttpPost("http://71.94.58.146:8080/data");
-			HttpResponse response = null;
-			String ret;
-
-			try {
-				// ArrayList<NameValuePair> nameValuePairs = new
-				// ArrayList<NameValuePair>();
-				// Iterator<String> it = mData.keySet().iterator();
-				// while(it.hasNext()) {
-				// String key = it.next();
-				// nameValuePairs.add(new BasicNameValuePair(key,
-				// mData.get(key)));
-				// }
-				//
-				// httppost.setEntity(new UrlEncodedFormEntity(nameValuePairs,
-				// "UTF-8"));
-
-				httppost.setEntity(new StringEntity(mJson, "UTF-8"));
-				httppost.setHeader("Content-Type", "application/json");
-
-				response = httpclient.execute(httppost);
-				ret = EntityUtils.toString(response.getEntity());
-
-			} catch (ClientProtocolException e) {
-				return Log.getStackTraceString(e);
-
-			} catch (Exception e) {
-				return Log.getStackTraceString(e);
-			}
-			return ret;
-		}
-
-		@Override
-		protected void onPostExecute(String result) {
-			Toast.makeText(getApplicationContext(), result, Toast.LENGTH_SHORT)
-					.show();
-		}
-
-	}
 
 	/** Called when the activity is first created. */
 	@Override
@@ -210,7 +120,7 @@ public class MainActivity extends Activity implements SensorEventListener {
 		super.onCreate(savedInstanceState);
       Log.i("tag", "called onCreate!");
       
-      startService(new Intent(this, MyService.class));
+      // wildly disgusting... but lets us pass the context into sub-methods.
       Log.i("tag", "started repeating service!");
       
 		setContentView(R.layout.main);
@@ -219,53 +129,88 @@ public class MainActivity extends Activity implements SensorEventListener {
 		sensorMan.registerListener(this,
 				sensorMan.getDefaultSensor(Sensor.TYPE_ACCELEROMETER),
 				SensorManager.SENSOR_DELAY_NORMAL);
-		// Timer timer = new Timer();
+		
+      EditText userIdField = (EditText) findViewById(R.id.user_id);
+      userIdField.addTextChangedListener(new TextWatcher() {
+
+		    @Override
+		    public void onTextChanged(CharSequence s, int start, int before, int count) {
+		    }
+
+		    @Override
+		    public void beforeTextChanged(CharSequence s, int start, int count,
+		            int after) {
+		    }
+
+		    @Override
+		    public void afterTextChanged(Editable s) {
+		        // we assign "theText" a value here
+		       userId = s.toString();
+		    }
+		});
+		
+		
 
 		Button start_col = (Button) findViewById(R.id.start_col);
-		findViewById(R.id.user_id);
 		start_col.setVisibility(View.VISIBLE);
-		start_col.setOnClickListener(new View.OnClickListener() {
-			public void onClick(View view) {
-				findViewById(R.id.start_col).setVisibility(View.GONE);
-				findViewById(R.id.end_col).setVisibility(View.VISIBLE);
+      start_col.setOnClickListener(new View.OnClickListener() {
+         public void onClick(View view) {
+            Log.i("tag", "clicked start col");
 
-				// start collection
+            findViewById(R.id.start_col).setVisibility(View.GONE);
+            findViewById(R.id.end_col).setVisibility(View.VISIBLE);
 
-				timer = new Timer();
-				timer.scheduleAtFixedRate(new CollectionTask(), 3000, 50);
-			}
-		});
 
-		Button end_col = (Button) findViewById(R.id.end_col);
-		end_col.setVisibility(View.GONE);
-		end_col.setOnClickListener(new View.OnClickListener() {
-			public void onClick(View view) {
-				findViewById(R.id.end_col).setVisibility(View.GONE);
-				findViewById(R.id.start_col).setVisibility(View.VISIBLE);
+            startService(new Intent(MainActivity.this, MyService.class));
+             bindService(new Intent(MainActivity.this, MyService.class),
+             mConnection, Context.BIND_AUTO_CREATE);
 
-				timer.cancel();
-				// finish collection
-				// send post
+             Bundle bundle = new Bundle();
+             bundle.putString(MyService.USER_ID_KEY, userId);
+             final Message msg = Message.obtain(null, 1, null);
+             msg.setData(bundle);
+            
+             
+             Thread thread = new Thread() {
+                @Override
+                public void run() {
+                   try {
+                      while(!bound) {
+                         Thread.sleep(1000);
+                         Log.i("tag", "service not yet bound");
+                      }
+                      if(messenger == null) {
+                         Log.i("tag", "error sending user id to service: messenger is null"
+                               );
+                         System.exit(1);
+                      }
+                     messenger.send(msg);
+                  } catch (RemoteException e) {
+                     // this case is pretty bad
+                     Log.i("tag", "error sending user id to service: " + e);
+                  } catch (Exception e) {
+                     Log.i("tag", "error sending user id to service: " + e);
+                  }
+                   
+                }
+             };
+             thread.start();
+             
+         }
+      });
 
-				List<AccelerometerFeatureSet> afs = updateAFS();
+      Button end_col = (Button) findViewById(R.id.end_col);
+      end_col.setVisibility(View.GONE);
+      end_col.setOnClickListener(new View.OnClickListener() {
+         public void onClick(View view) {
+            Log.i("tag", "clicked end col");
 
-				counter = 0;
-				xs = new ArrayList<Double>();
-				ys = new ArrayList<Double>();
-				zs = new ArrayList<Double>();
-				println("asdf");
-				
-				Gson gson = new Gson();
-				String g = gson.toJson(afs);
-
-				Toast.makeText(getApplicationContext(), g, Toast.LENGTH_SHORT)
-						.show();
-				// String g = "{\"value\":\"yes\"}";
-
-				AsyncHttpPost asyncHttpPost = new AsyncHttpPost(g);
-				asyncHttpPost.execute();
-
-			}
+            findViewById(R.id.end_col).setVisibility(View.GONE);
+            findViewById(R.id.start_col).setVisibility(View.VISIBLE);
+            // currently does nothing, long term should kill the program.
+             unbindService(mConnection);
+            stopService(new Intent(MainActivity.this, MyService.class));
+         }
 		});
 	}
 
@@ -296,4 +241,24 @@ public class MainActivity extends Activity implements SensorEventListener {
 		}
 	}
 
+	// start stack overflow code
+   Messenger messenger;
+   boolean bound = false;
+   String userId;
+
+
+   private ServiceConnection mConnection = new ServiceConnection() {
+
+       @Override
+       public void onServiceConnected(ComponentName className,
+               IBinder service) {
+          messenger = new Messenger(service);
+          bound = true;
+       }
+
+       @Override
+       public void onServiceDisconnected(ComponentName arg0) {
+          bound = false;
+       }
+   };
 }
